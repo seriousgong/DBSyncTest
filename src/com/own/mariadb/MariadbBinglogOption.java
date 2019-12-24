@@ -41,13 +41,12 @@ public class MariadbBinglogOption implements  Runnable {
     /**缓存收集到的sql,而不是一股脑直接消费*/
     public final static ArrayBlockingQueue<Map<String,String>> SQL_QUEUE  =  new ArrayBlockingQueue<>(100);
     public String filePath ;
-
     private Charset charset = Charset.forName("utf-8");
     private static MysqlQueryExecutor executor;
 
     static {
         try {
-            MysqlConnector mysqlConnector = new MysqlConnector(new InetSocketAddress("192.168.56.253", 3307), "root", "root");
+            MysqlConnector mysqlConnector = new MysqlConnector(new InetSocketAddress("192.168.56.253", 14544), "root", "root");
             mysqlConnector.connect();
             executor = new MysqlQueryExecutor(mysqlConnector);
 
@@ -167,7 +166,7 @@ public class MariadbBinglogOption implements  Runnable {
         binlogFileName=split[0];
         binlogPosition= Long.valueOf(split[1]);
         /*创建mysql客户端*/
-        MysqlConnector mysqlConnector = new MysqlConnector(new InetSocketAddress("192.168.56.253", 3307), "root", "root");
+        MysqlConnector mysqlConnector = new MysqlConnector(new InetSocketAddress("192.168.56.253", 14544), "root", "root");
         mysqlConnector.connect();
         /*修改session配置*/
         updateSettings(mysqlConnector);
@@ -190,8 +189,6 @@ public class MariadbBinglogOption implements  Runnable {
 
         DirectLogFetcher directLogFetcher = new DirectLogFetcher();
         directLogFetcher.start(mysqlConnector.getChannel());
-        MysqlConnection mysqlConnection = new MysqlConnection();
-        mysqlConnection.setConnector(mysqlConnector);
         LogDecoder logDecoder = new LogDecoder(LogEvent.UNKNOWN_EVENT, LogEvent.ENUM_END_EVENT);
         LogContext logContext = new LogContext();
         logContext.setFormatDescription(new FormatDescriptionLogEvent(4, LogEvent.BINLOG_CHECKSUM_ALG_CRC32));
