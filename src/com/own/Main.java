@@ -1,14 +1,19 @@
 package com.own;
 
+import com.alibaba.otter.canal.parse.driver.mysql.MysqlConnector;
 import com.alibaba.otter.canal.parse.driver.mysql.packets.Capability;
 import com.alibaba.otter.canal.parse.driver.mysql.packets.HeaderPacket;
 import com.alibaba.otter.canal.parse.driver.mysql.packets.client.ClientAuthenticationPacket;
+import com.alibaba.otter.canal.parse.driver.mysql.packets.client.RegisterSlaveCommandPacket;
+import com.alibaba.otter.canal.parse.driver.mysql.packets.server.ErrorPacket;
 import com.alibaba.otter.canal.parse.driver.mysql.packets.server.HandshakeInitializationPacket;
 import com.alibaba.otter.canal.parse.driver.mysql.socket.SocketChannel;
 import com.alibaba.otter.canal.parse.driver.mysql.socket.SocketChannelPool;
+import com.alibaba.otter.canal.parse.driver.mysql.utils.PacketManager;
 import com.alibaba.otter.canal.parse.inbound.mysql.dbsync.DirectLogFetcher;
 import com.alibaba.otter.canal.parse.support.AuthenticationInfo;
 import com.own.mariadb.MariadbBinglogOption;
+import com.own.mariadb.nnn;
 import com.taobao.tddl.dbsync.binlog.LogBuffer;
 import com.taobao.tddl.dbsync.binlog.LogContext;
 import com.taobao.tddl.dbsync.binlog.LogDecoder;
@@ -247,17 +252,16 @@ public class Main {
             System.out.println(body[1]|body[2] << 8);
             byte[] join = join(body, 3, body.length - 1);
             System.out.println(new String(join));
-
+//            sendRegisterSlave(channel);
 
             sendBinlogPackage(channel);
-
+//            sendTableDumpPackage(channel);
 //            byte[] read1 = channel.read(4, 9999);
 //            System.out.println(read1[0]);
 //            HeaderPacket headerPacket1 = new HeaderPacket();
 //            headerPacket1.fromBytes(read1);
 //            System.out.println(Arrays.toString(read1));
 //           channel.read(headerPacket1.getPacketBodyLength(), 9999);
-
 
             formatBinlog(channel);
 //            byte[] join3 = join(read2, 3, read2.length - 1);
@@ -277,20 +281,91 @@ public class Main {
     }
 
     private static void formatBinlog(SocketChannel channel) throws IOException {
-        DirectLogFetcher directLogFetcher = new DirectLogFetcher();
-        directLogFetcher.start(channel);
-        LogDecoder logDecoder = new LogDecoder(LogEvent.UNKNOWN_EVENT, LogEvent.ENUM_END_EVENT);
-        LogContext logContext = new LogContext();
-        logContext.setFormatDescription(new FormatDescriptionLogEvent(4, LogEvent.BINLOG_CHECKSUM_ALG_CRC32));
 
-        if (directLogFetcher.fetch()){
-            LogEvent decode = logDecoder.decode(directLogFetcher, logContext);
-            System.out.println(decode);
-        }
 
-        System.out.println(Arrays.toString("binlog.000008".getBytes()));
+        byte[] rotateHeader = channel.read(4, 9999);
+        System.out.println(Arrays.toString(rotateHeader));
+        byte[] read1 = channel.read(rotateHeader[0], 9999);
+        System.out.println(Arrays.toString(read1));
+/*      以上为rotate事件*/
+        byte[] format = channel.read(4, 9999);
+        int i = (format[0] & 0xff) | (format[1] & 0xff << 8) | (format[2] & 0xff << 16);
+        System.out.println(i);
+        byte[] read = channel.read(i, 9999);
+        System.out.println(Arrays.toString(read));
+        System.out.println(new String(join(read, 20, 70)));
+//        System.out.println(new String(join(read, 71, 74)));
+        /*以上为format事件*/
+        byte[] read3 = channel.read(4, 9999);
+        System.out.println(Arrays.toString(read3));
+        int j = (read3[0] & 0xff) | (read3[1] & 0xff << 8) | (read3[2] & 0xff << 16);
+        byte[] read2 = channel.read(j, 9999);
+        System.out.println(Arrays.toString(read2));
+//        System.out.println(read[0]);
+        /*table map 事件*/
+        byte[] read4 = channel.read(4, 9999);
+        int k = (read4[0] & 0xff) | (read4[1] & 0xff << 8) | (read4[2] & 0xff << 16);
+        System.out.println(Arrays.toString(read4));
+        byte[] read5 = channel.read(k, 9999);
+        System.out.println(Arrays.toString(read5));
+        System.out.println("tableId:'" + (read5[20] & 0xff)+"'");
+        System.out.println("flag:'" + (read5[26] & 0xff) + "'");
+
     }
+    private void sendRegisterSlave(SocketChannel channel) throws IOException {
+        RegisterSlaveCommandPacket cmd = new RegisterSlaveCommandPacket();
+        cmd.reportHost ="192.168.56.251";
+        cmd.reportPasswd = "root";
+        cmd.reportUser = "root";
+        cmd.serverId = 4;
+        byte[] cmdBody = cmd.toBytes();
 
+        HeaderPacket header = new HeaderPacket();
+        header.setPacketBodyLength(cmdBody.length);
+        header.setPacketSequenceNumber((byte) 0x00);
+        PacketManager.writePkg(channel, header.toBytes(), cmdBody);
+
+        header = PacketManager.readHeader(channel, 4);
+        byte[] body = PacketManager.readBytes(channel, header.getPacketBodyLength());
+        assert body != null;
+        if (body[0] < 0) {
+            if (body[0] == -1) {
+                ErrorPacket err = new ErrorPacket();
+                err.fromBytes(body);
+                throw new IOException("Error When doing Register slave:" + err.toString());
+            } else {
+                throw new IOException("unpexpected packet with field_count=" + body[0]);
+            }
+        }
+    }
+    private static void sendTableDumpPackage(SocketChannel channel) throws IOException {
+        /*创建 binglogdump 请求包*/
+
+        HeaderPacket headerPacket = new HeaderPacket();
+
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        /*默认值  [13] COM_BINLOG_DUMP 占一个字节*/
+        byteArrayOutputStream.write((byte)0x13);
+        /*  数据库长度*/
+        byte[] bytes1 = "test".getBytes();
+        byteArrayOutputStream.write(bytes1.length);
+        /* 写入数据库名字信息*/
+        byteArrayOutputStream.write(bytes1);
+        /* 表名*/
+        byte[] bytes2 = "asdq".getBytes();
+        byteArrayOutputStream.write(bytes2.length);
+        byteArrayOutputStream.write(bytes2);
+        /*binlog filename */
+        byte[] bytes = byteArrayOutputStream.toByteArray();
+        headerPacket.setPacketBodyLength(bytes.length);
+        headerPacket.setPacketSequenceNumber((byte)0x00);
+
+        byteArrayOutputStream.reset();
+        byteArrayOutputStream.write(headerPacket.toBytes());
+        byteArrayOutputStream.write(bytes);
+
+        channel.write(byteArrayOutputStream.toByteArray());
+    }
     private static void sendBinlogPackage(SocketChannel channel) throws IOException {
         /*创建 binglogdump 请求包*/
 
@@ -300,7 +375,7 @@ public class Main {
         /*默认值  [12] COM_BINLOG_DUMP 占一个字节*/
         byteArrayOutputStream.write((byte)0x12);
         /*  binlog-pos   4个字节 ，我们就从4开始*/
-        int binlogPosition = 110863;
+        int binlogPosition = 414;
         byte fouthByte = (byte)(binlogPosition & 0xFF);
         byte thirdByte = (byte)(binlogPosition >>> 8);
         byte secondByte = (byte)(binlogPosition >>> 16);
@@ -325,9 +400,10 @@ public class Main {
         byteArrayOutputStream.write(secondByte);
         byteArrayOutputStream.write(firstByte);
         /*binlog filename */
-        String  binlogFilename = "binlog.000008";
+        String  binlogFilename = "binlog.000009";
         byteArrayOutputStream.write(binlogFilename.getBytes());
         byte[] bytes = byteArrayOutputStream.toByteArray();
+        System.out.println("asdasdas:::::::::::"+Arrays.toString(bytes));
         headerPacket.setPacketBodyLength(bytes.length);
         headerPacket.setPacketSequenceNumber((byte)0x00);
 
