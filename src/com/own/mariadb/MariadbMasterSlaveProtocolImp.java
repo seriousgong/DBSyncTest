@@ -28,8 +28,8 @@ public class MariadbMasterSlaveProtocolImp {
         SocketChannel channel = SocketChannelPool.open(new InetSocketAddress("192.168.56.251", 14544));
         /* 建立mysql connect 连接*/
         connect(channel);
-//        sendBinlogPackage(channel);
-//        formatBinlog(channel);
+        sendBinlogPackage(channel);
+        formatBinlog(channel);
         channel.close();
     }
 
@@ -152,7 +152,7 @@ public class MariadbMasterSlaveProtocolImp {
         int capabilityFlagsLower = get16Int(serverReponseHandShakePackage[++num], serverReponseHandShakePackage[++num]);
         System.out.println("capabilityFlags:'" + capabilityFlagsLower + "'");
         /*如果还*/
-        if (serverReponseHandShakePackage.length > num) {
+//        if (serverReponseHandShakePackage.length > num) {
             /* charset 33  0x21  utf8_general_ci*/
             byte charSet = serverReponseHandShakePackage[++num];
             System.out.println("charset:'" + Byte.toString(charSet) + "'");
@@ -180,7 +180,7 @@ public class MariadbMasterSlaveProtocolImp {
             System.out.println("authPluginName:'" + authPluginName + "'");
             /*构建客户端认证包 */
             clientAuthResponse(channel, sequenceNumber, sha1EncryptPart1, charSet, sha1EncryptPart2, authPluginName);
-        }
+//        }
     }
 
     private static void clientAuthResponse(SocketChannel channel, int sequenceNumber, byte[] sha1EncryptPart1, byte charSet, byte[] sha1EncryptPart2, String authPluginName) throws IOException, NoSuchAlgorithmException {
@@ -200,17 +200,14 @@ public class MariadbMasterSlaveProtocolImp {
         /*charset   字符集 */
         byteArrayOutputStream.write(charSet);
         /* 此处保留23个字节*/
-        for (int j = 0; j < 23; j++) {
+        int reservedBytes = 23;
+        for (int j = 0; j < reservedBytes; j++) {
             byteArrayOutputStream.write(0x00);
         }
         /* 认证用户名 */
         byteArrayOutputStream.write("root".getBytes());
         byteArrayOutputStream.write(0x00);
-        /* auth_plugin 选择mysql_native_plugin */
-            /*密码 要求加密
-                          SHA1( password ) XOR SHA1( "20-bytes random data from server" <concat> SHA1( SHA1( password ) ) )
-                          使用 java自带加密类
-            * */
+        /* auth_plugin 选择mysql_native_plugin  'SHA1( password ) XOR SHA1( "20-bytes random data from server" <concat> SHA1(SHA1( password )))' */
         byte[] passwordBytes = "root".getBytes();
         MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
         byte[] firstEncrypt = sha1.digest(passwordBytes);
@@ -225,17 +222,12 @@ public class MariadbMasterSlaveProtocolImp {
         }
         byteArrayOutputStream.write((byte) thirdEncrypt.length);
         byteArrayOutputStream.write(thirdEncrypt);
-
         /*  capabilities & CLIENT_CONNECT_WITH_DB 进入数据库名,在客户端需求中没有| CLIENT_CONNECT_WITH_DB 所以不写入*/
-
         /*auth plugin name 认证插件名 我们使用 mysql_native_password*/
         byteArrayOutputStream.write(authPluginName.getBytes());
         byteArrayOutputStream.write(0x00);
         /*封装好认证包*/
         byte[] clientAuthResponsePackageBytes = byteArrayOutputStream.toByteArray();
-
-        /*发送headerPakage*/
-
         /*header包 auth包 二合一 */
         byte[] authHeaderPackageBytes =
                 {
@@ -255,9 +247,10 @@ public class MariadbMasterSlaveProtocolImp {
         byte[] body = channel.read(serverAuthResponsePackageBodyLength, 99999);
         System.out.println(Arrays.toString(body));
         System.out.println("serverAuthResponsePackageBodyLength:'" + serverAuthResponsePackageBodyLength + "'");
+        final int statusEOF=254;
         if (body[0] == 0) {
             System.out.println("认证成功");
-        } else if ((int) body[0] == 254) {
+        } else if ((int) body[0] == statusEOF) {
             System.out.println("认证包数据缺失");
         } else {
             System.out.println("认证失败");
@@ -392,23 +385,15 @@ public class MariadbMasterSlaveProtocolImp {
         System.out.println("columnTypeArray:'" + Arrays.toString(MariadbMasterSlaveProtocolImp.columnTypeArray) + "'");
         System.out.println("metaValueArrays:'" + Arrays.toString(MariadbMasterSlaveProtocolImp.columnMetaValueArray) + "'");
         /* null bitmask*/
-        int bitMapLength;
-        switch ((columnCount + 7) / 8) {
-            case 2:
-                bitMapLength = get16Int(eventBody[++index], eventBody[++index]);
-                break;
-            case 3:
-                bitMapLength = get24Int(eventBody[++index], eventBody[++index], eventBody[++index]);
-                break;
-            case 4:
-                bitMapLength = get32Int(eventBody[++index], eventBody[++index], eventBody[++index], eventBody[++index]);
-                break;
-            default:
-                bitMapLength = eventBody[++index];
-        }
         /* 每个bit set 标识 当前字段能否为null 1标识可以 0标识不能 */
-        BitSet bitSet = new BitSet(bitMapLength);
-
+        BitSet bitSet = new BitSet();
+        index = fillBitMap(eventBody, index, columnCount, bitSet);
+        System.out.println("nullable bitmap:'"+bitSet+"'");
+        if(index<eventBody.length-1){
+            System.out.println("解析出错");
+        }else{
+            System.out.println("解析完成");
+        }
     }
 
     private static int[] transformMetaValue(byte[] columnDefBytes, byte[] columnMetaDefBytes) {
@@ -520,7 +505,8 @@ public class MariadbMasterSlaveProtocolImp {
     }
 
     private static int fillBitMap(byte[] eventBody, int index, int columnCount, BitSet bitmap1) {
-        for (int bitLoc = 0; bitLoc < columnCount; bitLoc += 8) {
+        int bit8 = 8;
+        for (int bitLoc = 0; bitLoc < columnCount; bitLoc += bit8) {
             int mapValue = eventBody[++index] & 0xff;
             System.out.println("mapValue:'" + mapValue + "'");
             if ((mapValue & (0x01)) != 0) {
