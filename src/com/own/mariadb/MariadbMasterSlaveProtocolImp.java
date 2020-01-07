@@ -2,11 +2,8 @@ package com.own.mariadb;
 
 import com.alibaba.otter.canal.parse.driver.mysql.packets.Capability;
 import com.alibaba.otter.canal.parse.driver.mysql.packets.HeaderPacket;
-import com.alibaba.otter.canal.parse.driver.mysql.packets.client.RegisterSlaveCommandPacket;
-import com.alibaba.otter.canal.parse.driver.mysql.packets.server.ErrorPacket;
 import com.alibaba.otter.canal.parse.driver.mysql.socket.SocketChannel;
 import com.alibaba.otter.canal.parse.driver.mysql.socket.SocketChannelPool;
-import com.alibaba.otter.canal.parse.driver.mysql.utils.PacketManager;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -31,8 +28,8 @@ public class MariadbMasterSlaveProtocolImp {
         SocketChannel channel = SocketChannelPool.open(new InetSocketAddress("192.168.56.251", 14544));
         /* 建立mysql connect 连接*/
         connect(channel);
-        sendBinlogPackage(channel);
-        formatBinlog(channel);
+//        sendBinlogPackage(channel);
+//        formatBinlog(channel);
         channel.close();
     }
 
@@ -45,7 +42,7 @@ public class MariadbMasterSlaveProtocolImp {
         /*默认值  [12] COM_BINLOG_DUMP 占一个字节*/
         byteArrayOutputStream.write((byte) 0x12);
         /*  binlog-pos   4个字节 ，我们就从4开始*/
-        int binlogPosition = 4; //1009 414 414
+        int binlogPosition = 4;
         byte fouthByte = (byte) (binlogPosition & 0xFF);
         byte thirdByte = (byte) (binlogPosition >>> 8);
         byte secondByte = (byte) (binlogPosition >>> 16);
@@ -70,7 +67,7 @@ public class MariadbMasterSlaveProtocolImp {
         byteArrayOutputStream.write(secondByte);
         byteArrayOutputStream.write(firstByte);
         /*binlog filename */
-        String binlogFilename = "binlog.000007"; //binlog.000013 binlog.000015 binlog.000017
+        String binlogFilename = "binlog.000031";
         byteArrayOutputStream.write(binlogFilename.getBytes());
         byte[] bytes = byteArrayOutputStream.toByteArray();
         System.out.println("asdasdas:::::::::::" + Arrays.toString(bytes));
@@ -111,9 +108,9 @@ public class MariadbMasterSlaveProtocolImp {
 
     private static int get32Int(byte fouth, byte third, byte second, byte first) {
         int forthByte = (int) fouth & 0xFF;
-        int thirdByte = ( third & 0xFF) << 8;
-        int secondByte = ( second & 0xFF) << 16;
-        int firstByte = ( first & 0xFF) << 24;
+        int thirdByte = (third & 0xFF) << 8;
+        int secondByte = (second & 0xFF) << 16;
+        int firstByte = (first & 0xFF) << 24;
         return firstByte | secondByte | thirdByte | forthByte;
     }
 
@@ -126,7 +123,7 @@ public class MariadbMasterSlaveProtocolImp {
 
     private static void connect(SocketChannel channel) throws IOException, NoSuchAlgorithmException {
         /* 获取server端 header package*/
-        byte[] headerPackageByte = channel.read(4, 9999);
+        byte[] headerPackageByte = channel.read(4, 99999);
         System.out.println(Arrays.toString(headerPackageByte));
         /*有效数据包长度*/
         int packageBodyLength = (headerPackageByte[0]) & 0xff | ((int) headerPackageByte[1] & 0xff << 8) | ((int) headerPackageByte[2] & 0xff << 16);
@@ -134,7 +131,7 @@ public class MariadbMasterSlaveProtocolImp {
         int sequenceNumber = headerPackageByte[3];
         System.out.println("packageBodyLength:'" + packageBodyLength + "'sequenceNumber:'" + sequenceNumber + "'");
         /* 获取server端 handshake package 部分*/
-        byte[] serverReponseHandShakePackage = channel.read(packageBodyLength, 9999);
+        byte[] serverReponseHandShakePackage = channel.read(packageBodyLength, 99999);
         /*String  protocolVersion  占用1字节*/
         int num = 0;
         System.out.println("protocolVersion:'" + Byte.toString(serverReponseHandShakePackage[num]) + "'");
@@ -150,7 +147,7 @@ public class MariadbMasterSlaveProtocolImp {
         /*auth-plugin-data-part1   8字节*/
         byte[] sha1EncryptPart1 = join(serverReponseHandShakePackage, ++num, num += 7);
         /* filler_1 (1) -- 0x00(固定) */
-        byte filler = serverReponseHandShakePackage[++num];
+         ++num;
         /* capability flags int */
         int capabilityFlagsLower = get16Int(serverReponseHandShakePackage[++num], serverReponseHandShakePackage[++num]);
         System.out.println("capabilityFlags:'" + capabilityFlagsLower + "'");
@@ -198,6 +195,7 @@ public class MariadbMasterSlaveProtocolImp {
         write32Int(byteArrayOutputStream, clientCapabilities);
         /*max-packet size   16M 固定  int 4个字节*/
         int maxPackageSize = 1 << 24;
+        System.out.println("maxPackageSize:'"+maxPackageSize+"'");
         write32Int(byteArrayOutputStream, maxPackageSize);
         /*charset   字符集 */
         byteArrayOutputStream.write(charSet);
@@ -251,10 +249,11 @@ public class MariadbMasterSlaveProtocolImp {
         /*发包*/
         channel.write(fullClientAuthPackageBytes);
         /*此时包已发完*/
-        byte[] serverAuthResponse = channel.read(4, 9999);
+        byte[] serverAuthResponse = channel.read(4, 99999);
         int serverAuthResponsePackageBodyLength =
                 (int) serverAuthResponse[0] & 0xff | ((int) serverAuthResponse[1] & 0xff << 8) | ((int) serverAuthResponse[2] & 0xff << 16);
-        byte[] body = channel.read(serverAuthResponsePackageBodyLength, 9999);
+        byte[] body = channel.read(serverAuthResponsePackageBodyLength, 99999);
+        System.out.println(Arrays.toString(body));
         System.out.println("serverAuthResponsePackageBodyLength:'" + serverAuthResponsePackageBodyLength + "'");
         if (body[0] == 0) {
             System.out.println("认证成功");
@@ -274,96 +273,90 @@ public class MariadbMasterSlaveProtocolImp {
     }
 
     private static void formatBinlog(SocketChannel channel) throws IOException {
-        int count = 0;
         while (true) {
-            count++;
-            byte[] headerPackageBytes = channel.read(4, 9999);
+            byte[] headerPackageBytes = channel.read(4, 99999);
             int bodyLength = get24Int(headerPackageBytes[0], headerPackageBytes[1], headerPackageBytes[2]);
             System.out.println(Arrays.toString(headerPackageBytes));
             System.out.println("bodyLength:'" + bodyLength + "'");
             if (bodyLength > 0) {
                 int squenceNumber = headerPackageBytes[3];
-                byte[] eventPackageHeaderBytes = channel.read(20, 9999);
-                System.out.println(Arrays.toString(eventPackageHeaderBytes));
+                System.out.println("squenceNumber:'" + squenceNumber + "'");
                 /*取 binlog事件头 */
-                int index = 0;
-                int timestamp = get32Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
-                String date = timeToString(timestamp);
-                System.out.println("本次事件发生时间:'" + date + "'");
-                /* 事件类型*/
-                int binglogEvenType = eventPackageHeaderBytes[++index];
-                System.out.println("事件类型:'" + binglogEvenType + "'" + index);
-                /*server id*/
-                int serverId = get32Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
-                System.out.println("serverId:'" + serverId + "'" + index);
-                /*事件大小*/
-                int eventSize = get32Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
-                System.out.println("eventSize:'" + eventSize + "'" + index);
-                /* binlog位置*/
-                int binlogPosition = get32Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
-                System.out.println("binlogPosition:'" + binlogPosition + "'" + index);
-                /* binlog 事件标志*/
-                int binlogEventFlag = get16Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
-                System.out.println("binlogEventFlag:'" + binlogEventFlag + "'" + index);
-                byte[] eventBody = channel.read(eventSize - 19, 9999);
-                System.out.println(Arrays.toString(eventBody));
-                /**/
-
-                switch (binglogEvenType) {
-                    case BinlogEvent.ROTATE_EVENT:
-                        System.out.println("本次事件为ROTATE事件");
-                        System.out.println("当前binlog文件:'" + new String(eventBody) + "'");
-                        break;
-                    case BinlogEvent.FORMAT_DESCRIPTION_EVENT:
-                        System.out.println("本次事件为FORMAT_DESCRIPTION事件");
-                        break;
-                    case BinlogEvent.TABLE_MAP_EVENT:
-                        System.out.println("本次事件为TABLE_MAP事件");
-                        parseTableMapEvent(eventBody);
-                        break;
-                    case BinlogEvent.WRITE_ROWS_EVENT_V0:
-                    case BinlogEvent.WRITE_ROWS_EVENT_V1:
-                    case BinlogEvent.WRITE_ROWS_EVENT_V2:
-                        System.out.println("本次事件为WRITE_ROWS事件");
-                        parseWriteRowsEvent(eventBody);
-                        break;
-                    case BinlogEvent.DELETE_ROWS_EVENT_V0:
-                    case BinlogEvent.DELETE_ROWS_EVENT_V1:
-                    case BinlogEvent.DELETE_ROWS_EVENT_V2:
-                        System.out.println("本次事件为DELETE_ROWS事件");
-                        System.exit(0);
-                        break;
-                    case BinlogEvent.UPDATE_ROWS_EVENT_V0:
-                    case BinlogEvent.UPDATE_ROWS_EVENT_V1:
-                    case BinlogEvent.UPDATE_ROWS_EVENT_V2:
-                        System.out.println("本次事件为UPDATE_ROWS事件");
-                        break;
-                    case BinlogEvent.XID_EVENT:
-                        System.out.println("commit事件");
-                        System.exit(0);
-                    default:
-                        break;
-                }
+                byte[] eventPackageHeaderBytes = channel.read(20, 99999);
+                System.out.println(Arrays.toString(eventPackageHeaderBytes));
+                parseBinlogEvent(channel, eventPackageHeaderBytes);
             }
-//            formatRotateEvent(channel);
-//            formatDescriptionEvent(channel);
-//            formatTableMapEvent(channel);
-//            formatRowEvent(channel);
         }
 
 
+    }
+
+    private static void parseBinlogEvent(SocketChannel channel, byte[] eventPackageHeaderBytes) throws IOException {
+        int index = 0;
+        int timestamp = get32Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
+        String date = timeToString(timestamp);
+        System.out.println("本次事件发生时间:'" + date + "'");
+        /* 事件类型*/
+        int binglogEvenType = eventPackageHeaderBytes[++index];
+        System.out.println("事件类型:'" + binglogEvenType + "'" + index);
+        /*server id*/
+        int serverId = get32Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
+        System.out.println("serverId:'" + serverId + "'" + index);
+        /*事件大小*/
+        int eventSize = get32Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
+        System.out.println("eventSize:'" + eventSize + "'" + index);
+        /* binlog位置*/
+        int binlogPosition = get32Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
+        System.out.println("binlogPosition:'" + binlogPosition + "'" + index);
+        /* binlog 事件标志*/
+        int binlogEventFlag = get16Int(eventPackageHeaderBytes[++index], eventPackageHeaderBytes[++index]);
+        System.out.println("binlogEventFlag:'" + binlogEventFlag + "'" + index);
+        byte[] eventBody = channel.read(eventSize - 19, 99999);
+        System.out.println(Arrays.toString(eventBody));
+        /**/
+
+        switch (binglogEvenType) {
+            case BinlogEvent.ROTATE_EVENT:
+                System.out.println("本次事件为ROTATE事件");
+                System.out.println("当前binlog文件:'" + new String(eventBody) + "'");
+                break;
+            case BinlogEvent.FORMAT_DESCRIPTION_EVENT:
+                System.out.println("本次事件为FORMAT_DESCRIPTION事件");
+                break;
+            case BinlogEvent.TABLE_MAP_EVENT:
+                System.out.println("本次事件为TABLE_MAP事件");
+                parseTableMapEvent(eventBody);
+                break;
+            case BinlogEvent.WRITE_ROWS_EVENT_V0:
+            case BinlogEvent.WRITE_ROWS_EVENT_V1:
+            case BinlogEvent.WRITE_ROWS_EVENT_V2:
+                System.out.println("本次事件为WRITE_ROWS事件");
+                parseWriteRowsEvent(eventBody);
+                break;
+            case BinlogEvent.DELETE_ROWS_EVENT_V0:
+            case BinlogEvent.DELETE_ROWS_EVENT_V1:
+            case BinlogEvent.DELETE_ROWS_EVENT_V2:
+                System.out.println("本次事件为DELETE_ROWS事件");
+                parseWriteRowsEvent(eventBody);
+                break;
+            case BinlogEvent.UPDATE_ROWS_EVENT_V0:
+            case BinlogEvent.UPDATE_ROWS_EVENT_V1:
+            case BinlogEvent.UPDATE_ROWS_EVENT_V2:
+                System.out.println("本次事件为UPDATE_ROWS事件");
+                break;
+            case BinlogEvent.XID_EVENT:
+                System.out.println("commit事件");
+//                System.exit(0);
+            default:
+                break;
+        }
     }
 
     private static void parseTableMapEvent(byte[] eventBody) {
         /*已知该事件为写事件*/
         int index = 0;
         /* table map事件中,table id 占6字节*/
-        byte[] tableIdBytes = join(eventBody, index, index += 5);
-        long tableId = get48Long(tableIdBytes);
-        System.out.println("tableId:'" + tableId + "'");
-        /*flags*/
-        int flags = get16Int(eventBody[++index], eventBody[++index]);
-        System.out.println("flags:'" + flags + "'");
+        index = parseBinlogEventHeader(eventBody, index);
         /* schema name length  占1个字节 */
         int dataBaseLength = (int) eventBody[++index];
         System.out.println("dataBaseLength:'" + dataBaseLength + "'");
@@ -422,14 +415,27 @@ public class MariadbMasterSlaveProtocolImp {
         int[] columnMetaValueArray = new int[columnDefBytes.length];
         int columnMetaDefBytesIndex = -1;
         for (int i = 0; i < columnDefBytes.length; i++) {
-            int columnMetaValue = 0;
-            if (columnDefBytes[i] == ColumnMetaDef.MYSQL_TYPE_VARCHAR) {
-                columnMetaValue = (columnMetaDefBytes[++columnMetaDefBytesIndex] & 0xff) | ((columnMetaDefBytes[++columnMetaDefBytesIndex] & 0xff) << 8);
-                columnMetaValueArray[i] = columnMetaValue;
-            } else if (columnDefBytes[i] == ColumnMetaDef.MYSQL_TYPE_LONG) {
-                columnMetaValue = Integer.MAX_VALUE;
-                columnMetaValueArray[i] = columnMetaValue;
+            int columnMetaValue;
+            switch ((int) columnDefBytes[i]){
+                case ColumnMetaDef.MYSQL_TYPE_VAR_STRING:
+                case ColumnMetaDef.MYSQL_TYPE_VARCHAR:
+                    columnMetaValue = (columnMetaDefBytes[++columnMetaDefBytesIndex] & 0xff) | ((columnMetaDefBytes[++columnMetaDefBytesIndex] & 0xff) << 8);
+                    columnMetaValueArray[i] = columnMetaValue;
+                    break;
+                case ColumnMetaDef.MYSQL_TYPE_LONG:
+                    columnMetaValue = Integer.MAX_VALUE;
+                    columnMetaValueArray[i] = columnMetaValue;
+                    break;
+                case ColumnMetaDef.MYSQL_TYPE_LONGLONG:
+
+                default:
+                    break;
             }
+//            if (columnDefBytes[i] == ColumnMetaDef.MYSQL_TYPE_VARCHAR) {
+//            } else if (columnDefBytes[i] == ColumnMetaDef.MYSQL_TYPE_LONG) {
+//                columnMetaValue = Integer.MAX_VALUE;
+//                columnMetaValueArray[i] = columnMetaValue;
+//            }
         }
 
         return columnMetaValueArray;
@@ -438,13 +444,7 @@ public class MariadbMasterSlaveProtocolImp {
     private static void parseWriteRowsEvent(byte[] eventBody) {
         /*已知该事件为写事件*/
         int index = 0;
-        /* write事件中,table id 占6字节*/
-        byte[] tableIdBytes = join(eventBody, index, index += 5);
-        long tableId = get48Long(tableIdBytes);
-        System.out.println("tableId:'" + tableId + "'");
-        /*flags*/
-        int flags = get16Int(eventBody[++index], eventBody[++index]);
-        System.out.println("flags:'" + flags + "'");
+        index = parseBinlogEventHeader(eventBody, index);
         /* column num  */
         int columnCount = (eventBody[++index] & 0xff);
         System.out.println("columnNum:'" + columnCount + "'");
@@ -452,45 +452,101 @@ public class MariadbMasterSlaveProtocolImp {
         BitSet bitmap1 = new BitSet();
         index = fillBitMap(eventBody, index, columnCount, bitmap1);
         System.out.println("bitMap1Value:'" + bitmap1 + "'");
-        /* rows nullable  */
-        BitSet nullMap = new BitSet();
-        index = fillBitMap(eventBody, index, columnCount, nullMap);
-        System.out.println("nullMap:'" + nullMap + "'");
-        /* rows data 通过table map 事件缓存的 字段 类型 以及长度进行转换 */
-        for (int i = 0; i < columnCount; i++) {
-            if (!nullMap.get(i)) {
-                /*字符串有字符串的取法    length 0 value */
-                if (MariadbMasterSlaveProtocolImp.columnTypeArray[i] == ColumnMetaDef.MYSQL_TYPE_VARCHAR) {
-                    int columnValueLength = eventBody[++index] & 0xff;
-                    if (columnValueLength < 0xfb) {
-                        ++index;
+        while (index < eventBody.length - 1) {
+            /* rows nullable  */
+            BitSet nullMap = new BitSet();
+            index = fillBitMap(eventBody, index, columnCount, nullMap);
+            System.out.println("nullMap:'" + nullMap + "'");
+            /* rows data 通过table map 事件缓存的 字段 类型 以及长度进行转换 */
+            System.out.println("--------------------------------------------->");
+            for (int i = 0; i < columnCount; i++) {
+                if (!nullMap.get(i)) {
+                    switch ( MariadbMasterSlaveProtocolImp.columnTypeArray[i]&0xff){
+                        case ColumnMetaDef.MYSQL_TYPE_VAR_STRING:
+                        case ColumnMetaDef.MYSQL_TYPE_VARCHAR:
+                            int metaLength = MariadbMasterSlaveProtocolImp.columnMetaValueArray[i];
+                            int columnValueLength;
+                            if (metaLength < 0xfb) {
+                                 columnValueLength = eventBody[++index] & 0xff;
+                            }else {
+                                byte meta1 = eventBody[++index];
+                                byte meta2 = eventBody[++index];
+                                columnValueLength = get16Int(meta1,meta2);
+                            }
+                            String columnValueString = new String(join(eventBody, ++index, index += (columnValueLength - 1)));
+                            System.out.println("columnValue:'" + columnValueString + "'meta length:'" + MariadbMasterSlaveProtocolImp.columnMetaValueArray[i]);
+                            break;
+                        case ColumnMetaDef.MYSQL_TYPE_LONG:
+                            int columnValueInt= get32Int(eventBody[++index], eventBody[++index], eventBody[++index], eventBody[++index]);
+                            System.out.println("columnValue:'" + columnValueInt + "'meta length:'" + Integer.MAX_VALUE);
+                            break;
+                        case ColumnMetaDef.MYSQL_TYPE_LONGLONG:
+                            long columnValueLong = get64Long(join(eventBody,++index,index+=(7)));
+                            System.out.println("columnValue:'" + columnValueLong + "'meta length:'" + Long.MAX_VALUE);
+                            default:
                     }
-                    String columnValue = new String(join(eventBody, ++index, index += (columnValueLength - 1)));
-                    System.out.println("columnValue:'" + columnValue + "'meta length:'" + MariadbMasterSlaveProtocolImp.columnMetaValueArray[i]);
-                } else if (MariadbMasterSlaveProtocolImp.columnTypeArray[i] == ColumnMetaDef.MYSQL_TYPE_LONG) {
-                    int columnValue = get32Int(eventBody[++index], eventBody[++index], eventBody[++index], eventBody[++index]);
-                    System.out.println("columnValue:'" + columnValue + "'meta length:'" + MariadbMasterSlaveProtocolImp.columnMetaValueArray[i]);
+                } else {
+                    System.out.println("columnValue:'null' meta length:'" + MariadbMasterSlaveProtocolImp.columnMetaValueArray[i]);
                 }
-            }else{
-                System.out.println("columnValue:'null' meta length:'" + MariadbMasterSlaveProtocolImp.columnMetaValueArray[i]);
+            }
+            System.out.println("<---------------------------------------------");
+            if (index < eventBody.length - 1) {
+                System.out.println("此次事件操作语句影响多行,尚未解析完成");
+            } else {
+                System.out.println("解析完成");
             }
         }
+    }
 
+    private static long get64Long(byte[] bytes) {
+        long number = 0;
+        for (int i = 0; i < bytes.length; i++) {
+            number |= ((long) bytes[i] << (i * 8));
+        }
 
+        return number;
+
+    }
+
+    private static int parseBinlogEventHeader(byte[] eventBody, int index) {
+        /* row 事件中,table id 占6字节*/
+        byte[] tableIdBytes = join(eventBody, index, index += 5);
+        long tableId = get48Long(tableIdBytes);
+        System.out.println("tableId:'" + tableId + "'");
+        /*flags*/
+        int flags = get16Int(eventBody[++index], eventBody[++index]);
+        System.out.println("flags:'" + flags + "'");
+        return index;
     }
 
     private static int fillBitMap(byte[] eventBody, int index, int columnCount, BitSet bitmap1) {
         for (int bitLoc = 0; bitLoc < columnCount; bitLoc += 8) {
             int mapValue = eventBody[++index] & 0xff;
             System.out.println("mapValue:'" + mapValue + "'");
-            if ((mapValue & (0x01)) != 0) bitmap1.set(bitLoc);
-            if ((mapValue & 0x02) != 0) bitmap1.set(bitLoc + 1);
-            if ((mapValue & 0x04) != 0) bitmap1.set(bitLoc + 2);
-            if ((mapValue & 0x08) != 0) bitmap1.set(bitLoc + 3);
-            if ((mapValue & 0x10) != 0) bitmap1.set(bitLoc + 4);
-            if ((mapValue & 0x20) != 0) bitmap1.set(bitLoc + 5);
-            if ((mapValue & 0x40) != 0) bitmap1.set(bitLoc + 6);
-            if ((mapValue & 0x80) != 0) bitmap1.set(bitLoc + 7);
+            if ((mapValue & (0x01)) != 0) {
+                bitmap1.set(bitLoc);
+            }
+            if ((mapValue & 0x02) != 0) {
+                bitmap1.set(bitLoc + 1);
+            }
+            if ((mapValue & 0x04) != 0) {
+                bitmap1.set(bitLoc + 2);
+            }
+            if ((mapValue & 0x08) != 0) {
+                bitmap1.set(bitLoc + 3);
+            }
+            if ((mapValue & 0x10) != 0) {
+                bitmap1.set(bitLoc + 4);
+            }
+            if ((mapValue & 0x20) != 0) {
+                bitmap1.set(bitLoc + 5);
+            }
+            if ((mapValue & 0x40) != 0) {
+                bitmap1.set(bitLoc + 6);
+            }
+            if ((mapValue & 0x80) != 0) {
+                bitmap1.set(bitLoc + 7);
+            }
         }
         return index;
     }
@@ -514,155 +570,6 @@ public class MariadbMasterSlaveProtocolImp {
 
     private static int get24Int(byte third, byte second, byte first) {
         return (third & 0xff) | ((second & 0xff) << 8) | ((first & 0xff) << 16);
-    }
-
-    private static void formatDescriptionEvent(SocketChannel channel) throws IOException {
-        byte[] format = channel.read(4, 9999);
-        int i = (format[0] & 0xff) | (format[1] & 0xff << 8) | (format[2] & 0xff << 16);
-        System.out.println(i);
-        byte[] read = channel.read(i, 9999);
-        System.out.println(Arrays.toString(read));
-        System.out.println(new String(join(read, 20, 70)));
-//        System.out.println(new String(join(read, 71, 74)));
-    }
-
-    private static void formatRotateEvent(SocketChannel channel) throws IOException {
-        byte[] rotateHeader = channel.read(4, 9999);
-        System.out.println(Arrays.toString(rotateHeader));
-        int i1 = (rotateHeader[0] & 0xff) | (rotateHeader[1] & 0xff << 8) | (rotateHeader[2] & 0xff << 16);
-        System.out.println("i1:'" + i1 + "'");
-        byte[] read1 = channel.read(i1, 9999);
-        System.out.println(Arrays.toString(read1));
-        System.out.println("294:'" + new String(read1));
-    }
-
-    private static void formatRowEvent(SocketChannel channel) throws IOException {
-        byte[] read4 = channel.read(4, 9999);
-        int k = (read4[0] & 0xff) | (read4[1] & 0xff << 8) | (read4[2] & 0xff << 16);
-        System.out.println(Arrays.toString(read4));
-        byte[] read5 = channel.read(k, 9999);
-        System.out.println(Arrays.toString(read5));
-        System.out.println("tableId:'" + (read5[20] & 0xff) + "'");
-        System.out.println("flag:'" + ((read5[26] & 0xff) | (read5[27] & 0xff << 8)) + "'");
-        System.out.println("effort columns:'" + (read5[28] & 0xff) + "'");
-        BitSet bitMap = new BitSet(5);
-        int index = 29;
-        int flag;
-        for (int i2 = 0; i2 < (read5[28] & 0xff); i2 += 8) {
-            if ((flag = read5[index++]) != 0) {
-                if ((flag & 0x01) != 0) bitMap.set(i2);
-                if ((flag & 0x02) != 0) bitMap.set(i2 + 1);
-                if ((flag & 0x04) != 0) bitMap.set(i2 + 2);
-                if ((flag & 0x08) != 0) bitMap.set(i2 + 3);
-                if ((flag & 0x10) != 0) bitMap.set(i2 + 4);
-                if ((flag & 0x20) != 0) bitMap.set(i2 + 5);
-                if ((flag & 0x40) != 0) bitMap.set(i2 + 6);
-                if ((flag & 0x80) != 0) bitMap.set(i2 + 7);
-            }
-        }
-        System.out.println(bitMap.toString());
-        String s = "400";
-        System.out.println(((byte) (-1) & 0xff));
-        System.out.println(-32 & 0xff);
-        System.out.println(Arrays.toString(s.getBytes()));
-    }
-
-    private static void formatTableMapEvent(SocketChannel channel) throws IOException {
-        int index = 19;
-        byte[] read3 = channel.read(4, 9999);
-        System.out.println(Arrays.toString(read3));
-        int j = (read3[0] & 0xff) | (read3[1] & 0xff << 8) | (read3[2] & 0xff << 16);
-        byte[] read2 = channel.read(j, 9999);
-        System.out.println(Arrays.toString(read2));
-        /* table id 6 bytes */
-        index += 6;
-        /* flag 2 bytes*/
-        index += 2;
-        byte databaseNameLength = read2[++index];
-        System.out.println("database name length :'" + databaseNameLength + "'");
-        System.out.println("database name :'" + new String(join(read2, ++index, index + databaseNameLength)) + "'");
-        index += databaseNameLength;
-        byte tableNameLength = read2[++index];
-        System.out.println("table name length:'" + tableNameLength);
-        System.out.println("table name :'" + new String(join(read2, ++index, index + tableNameLength)) + "'");
-        /*列数量*/
-        index += (tableNameLength + 1);
-        byte columnCount = read2[index];
-        System.out.println("column count :'" + columnCount + "'");
-        /*字段类型*/
-        for (int i = 0; i < 5; i++) {
-            ++index;
-            System.out.print("字符类型:'" + read2[index] + "',");
-        }
-        System.out.println();
-        /*字段总长*/
-        System.out.println("metainfo length :'" + (read2[++index] & 0xff) + "'");
-        /* 字段长度 */
-        for (int i = 0; i < 6; i++) {
-            ++index;
-            System.out.print("字段长度:'" + (read2[index] & 0xff) + "',");
-        }
-        System.out.println();
-
-
-//        System.out.println(read[0]);
-        /*table map 事件*/
-    }
-
-    private void sendRegisterSlave(SocketChannel channel) throws IOException {
-        RegisterSlaveCommandPacket cmd = new RegisterSlaveCommandPacket();
-        cmd.reportHost = "192.168.56.251";
-        cmd.reportPasswd = "root";
-        cmd.reportUser = "root";
-        cmd.serverId = 4;
-        byte[] cmdBody = cmd.toBytes();
-
-        HeaderPacket header = new HeaderPacket();
-        header.setPacketBodyLength(cmdBody.length);
-        header.setPacketSequenceNumber((byte) 0x00);
-        PacketManager.writePkg(channel, header.toBytes(), cmdBody);
-
-        header = PacketManager.readHeader(channel, 4);
-        byte[] body = PacketManager.readBytes(channel, header.getPacketBodyLength());
-        assert body != null;
-        if (body[0] < 0) {
-            if (body[0] == -1) {
-                ErrorPacket err = new ErrorPacket();
-                err.fromBytes(body);
-                throw new IOException("Error When doing Register slave:" + err.toString());
-            } else {
-                throw new IOException("unpexpected packet with field_count=" + body[0]);
-            }
-        }
-    }
-
-    private static void sendTableDumpPackage(SocketChannel channel) throws IOException {
-        /*创建 binglogdump 请求包*/
-
-        HeaderPacket headerPacket = new HeaderPacket();
-
-        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-        /*默认值  [13] COM_BINLOG_DUMP 占一个字节*/
-        byteArrayOutputStream.write((byte) 0x13);
-        /*  数据库长度*/
-        byte[] bytes1 = "test".getBytes();
-        byteArrayOutputStream.write(bytes1.length);
-        /* 写入数据库名字信息*/
-        byteArrayOutputStream.write(bytes1);
-        /* 表名*/
-        byte[] bytes2 = "asdq".getBytes();
-        byteArrayOutputStream.write(bytes2.length);
-        byteArrayOutputStream.write(bytes2);
-        /*binlog filename */
-        byte[] bytes = byteArrayOutputStream.toByteArray();
-        headerPacket.setPacketBodyLength(bytes.length);
-        headerPacket.setPacketSequenceNumber((byte) 0x00);
-
-        byteArrayOutputStream.reset();
-        byteArrayOutputStream.write(headerPacket.toBytes());
-        byteArrayOutputStream.write(bytes);
-
-        channel.write(byteArrayOutputStream.toByteArray());
     }
 
 
